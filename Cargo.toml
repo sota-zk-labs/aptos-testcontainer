@@ -1,0 +1,22 @@
+[package]
+name = "aptos-testcontainer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+testcontainers = { version = "0.21.1" }
+tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
+thiserror = { version = "1.0.63" }
+anyhow = { version = "1.0.71" }
+aptos-sdk = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
+walkdir = "2.3.3"
+base64 = "0.22.1"
+regex = "1.10.6"
+rand = "0.8.5"
+
+[dev-dependencies]
+lazy_static = "1.4"
+
+[patch.crates-io]
+merlin = { git = "https://github.com/aptos-labs/merlin" }
+x25519-dalek = { git = "https://github.com/aptos-labs/x25519-dalek", branch = "zeroize_v1" }
