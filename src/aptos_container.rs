@@ -1,19 +1,17 @@
+use std::{fs, path};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
-use std::{fs, path};
 
 use anyhow::{ensure, Error, Result};
-use aptos_sdk::crypto::ValidCryptoMaterialStringExt;
-use aptos_sdk::types::LocalAccount;
-use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use regex::Regex;
+use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use testcontainers::core::{ExecCommand, IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
-use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use walkdir::{DirEntry, WalkDir};
@@ -63,10 +61,10 @@ impl AptosContainer {
         ))
     }
 
-    pub async fn faucet(&self, account: &LocalAccount) -> Result<()> {
+    pub async fn faucet(&self, account_address: &str) -> Result<()> {
         let command = format!("aptos account transfer --private-key ${} --account {} --amount 30000000 --assume-yes",
                               ROOT_ACCOUNT_PRIVATE_KEY_ENV,
-                              account.address().to_string());
+                              account_address);
         let (stdout, stderr) = self.run_command(&command).await?;
         ensure!(
             stdout.contains(r#""vm_status": "Executed successfully""#),
@@ -94,7 +92,7 @@ impl AptosContainer {
     pub async fn upload_contract(
         &self,
         local_dir: &str,
-        account: &LocalAccount,
+        private_key: &str,
         named_addresses: &HashMap<String, String>,
         override_contract: bool,
     ) -> Result<()> {
@@ -137,15 +135,6 @@ impl AptosContainer {
             }
         }
 
-        // copy the credential into the container
-        let credential_file_content = Self::get_credential_file_content(account);
-        let command = format!(
-            "mkdir -p '{}/.aptos' && (echo '{}' | cat > '{}/.aptos/config.yaml')",
-            contract_path_str, credential_file_content, contract_path_str
-        );
-        let (_, stderr) = self.run_command(&command).await?;
-        ensure!(stderr.is_empty(), CommandFailed { command, stderr });
-
         // run move publish
         let named_address_params = named_addresses
             .iter()
@@ -154,8 +143,8 @@ impl AptosContainer {
             .unwrap_or("".to_string());
 
         let command = format!(
-            "cd {} && aptos move publish --skip-fetch-latest-git-deps --assume-yes {}",
-            contract_path_str, named_address_params
+            "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {}",
+            contract_path_str, private_key, named_address_params
         );
         let (stdout, stderr) = self.run_command(&command).await?;
         ensure!(
@@ -222,28 +211,10 @@ impl AptosContainer {
             .collect();
         random_string
     }
-
-    fn get_credential_file_content(account: &LocalAccount) -> String {
-        let private_key = account.private_key().to_encoded_string().unwrap();
-        let public_key = account.public_key().to_encoded_string().unwrap();
-        let account = account.address().to_string();
-        format!(
-            r#"---
-profiles:
-  default:
-    network: Local
-    private_key: "{}"
-    public_key: "{}"
-    account: "{}"
-    rest_url: "http://localhost:8080"
-    faucet_url: "http://localhost:8081"
-"#,
-            private_key, public_key, account
-        )
-    }
 }
 
 #[cfg(test)]
+#[cfg(feature = "testing")]
 mod tests {
     use crate::test_config::aptos_container_test;
 
@@ -253,18 +224,19 @@ mod tests {
     async fn upload_contract_test() {
         let aptos_container = aptos_container_test::lazy_aptos_container().await.unwrap();
 
-        let module_account = LocalAccount::from_private_key("0x73791ce34b2414d4afcb87561b0c442e48a3260f1c96de31da80f7cf2eec8113", 0).unwrap();
-        aptos_container.faucet(&module_account).await.unwrap();
+        let module_account_address = "e01cd1568c3b43b0343d57f571fd9ad0f5774c6b57a73755b62a437cdef2c734";
+        let module_account_private_key = "0x73791ce34b2414d4afcb87561b0c442e48a3260f1c96de31da80f7cf2eec8113";
+        aptos_container.faucet(module_account_address).await.unwrap();
 
         let mut named_addresses = HashMap::new();
         named_addresses.insert(
             "verifier_addr".to_string(),
-            module_account.address().to_string(),
+            module_account_address.to_string(),
         );
         aptos_container
             .upload_contract(
                 "./contract-sample",
-                &module_account,
+                &module_account_private_key,
                 &named_addresses,
                 false,
             )
@@ -277,18 +249,19 @@ mod tests {
     async fn duplicated_test2() {
         let aptos_container = aptos_container_test::lazy_aptos_container().await.unwrap();
 
-        let module_account = LocalAccount::from_private_key("0x73791ce34b2414d4afcb87561b0c442e48a3260f1c96de31da80f7cf2eec8113", 0).unwrap();
-        aptos_container.faucet(&module_account).await.unwrap();
+        let module_account_address = "e01cd1568c3b43b0343d57f571fd9ad0f5774c6b57a73755b62a437cdef2c734";
+        let module_account_private_key = "0x73791ce34b2414d4afcb87561b0c442e48a3260f1c96de31da80f7cf2eec8113";
+        aptos_container.faucet(module_account_address).await.unwrap();
 
         let mut named_addresses = HashMap::new();
         named_addresses.insert(
             "verifier_addr".to_string(),
-            module_account.address().to_string(),
+            module_account_address.to_string(),
         );
         aptos_container
             .upload_contract(
                 "./contract-sample",
-                &module_account,
+                &module_account_private_key,
                 &named_addresses,
                 false,
             )

@@ -1,3 +1,4 @@
+#[cfg(feature = "testing")]
 pub mod aptos_container_test {
     use std::sync::{Arc, OnceLock, Weak};
 
