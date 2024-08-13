@@ -1,3 +1,3 @@
 pub mod aptos_container;
 pub mod errors;
-pub mod test_config;
+pub mod test_utils;

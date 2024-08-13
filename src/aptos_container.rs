@@ -1,6 +1,8 @@
 use std::{fs, path};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{ensure, Error, Result};
@@ -13,7 +15,8 @@ use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use testcontainers::core::{ExecCommand, IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use tokio::io::AsyncReadExt;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::mpsc::{Receiver, Sender};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::errors::AptosContainerError::{CommandFailed, DockerExecFailed};
@@ -22,13 +25,17 @@ pub struct AptosContainer {
     container: ContainerAsync<GenericImage>,
     contract_path: String,
     contracts: Mutex<HashSet<String>>,
+    accounts: RwLock<Vec<String>>,
+
+    accounts_channel_rx: Mutex<Option<Receiver<String>>>,
+    accounts_channel_tx: RwLock<Option<Sender<String>>>,
 }
 
 const APTOS_IMAGE: &str = "sotazklabs/aptos-tools";
 const APTOS_IMAGE_TAG: &str = "mainnet";
 const FILTER_PATTERN: &str = r"^(?:\.git|target\/|.idea|Cargo.lock|build\/|.aptos\/)";
 
-const ROOT_ACCOUNT_PRIVATE_KEY_ENV: &str = "ROOT_ACCOUNT_PRIVATE_KEY";
+const ACCOUNTS_ENV: &str = "ACCOUNTS";
 const CONTENT_MAX_CHARS: usize = 120000; // 120 KB
 
 impl AptosContainer {
@@ -48,6 +55,9 @@ impl AptosContainer {
             container,
             contract_path: "/contract".to_string(),
             contracts: Default::default(),
+            accounts: Default::default(),
+            accounts_channel_rx: Default::default(),
+            accounts_channel_tx: Default::default(),
         })
     }
 }
@@ -61,23 +71,61 @@ impl AptosContainer {
         ))
     }
 
-    pub async fn faucet(&self, account_address: &str) -> Result<()> {
-        let command = format!("aptos account transfer --private-key ${} --account {} --amount 30000000 --assume-yes",
-                              ROOT_ACCOUNT_PRIVATE_KEY_ENV,
-                              account_address);
+    pub async fn run(&self, number_of_accounts: usize, callback: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output=Result<()>>>>) -> Result<()>
+    {
+        self.lazy_init_accounts().await?;
+
+        let mut accounts = vec![];
+        // TODO: check received messages size
+        self.accounts_channel_rx.lock().await.as_mut().unwrap().recv_many(&mut accounts, number_of_accounts).await;
+
+        let result = callback(accounts.clone()).await;
+
+        let guard = self.accounts_channel_tx.read().await;
+        for account in accounts {
+            guard.as_ref().unwrap().send(account).await.unwrap();
+        }
+        result
+    }
+
+    pub async fn get_initiated_accounts(&self) -> Result<Vec<String>> {
+        self.lazy_init_accounts().await?;
+        Ok(self.accounts.read().await.clone())
+    }
+
+    pub async fn lazy_init_accounts(&self) -> Result<()> {
+        let mut guard = self.accounts_channel_tx
+            .write()
+            .await;
+
+        if guard.is_some() {
+            return Ok(());
+        }
+
+        let command = format!("echo ${}", ACCOUNTS_ENV);
         let (stdout, stderr) = self.run_command(&command).await?;
         ensure!(
-            stdout.contains(r#""vm_status": "Executed successfully""#),
+            !stdout.is_empty(),
             CommandFailed {
                 command,
                 stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
             }
         );
+        let accounts = stdout.trim().split(",").map(|s| s.to_string()).collect::<Vec<String>>();
+        let (tx, rx) = mpsc::channel(accounts.len());
+        for account in accounts.iter() {
+            tx.send(account.to_string()).await.unwrap()
+        }
+
+        *self.accounts.write().await = accounts;
+        *self.accounts_channel_rx.lock().await = Some(rx);
+
+        *guard = Some(tx);
         Ok(())
     }
 
     pub async fn get_root_account_private_key(&self) -> Result<String> {
-        let command = format!("echo ${}", ROOT_ACCOUNT_PRIVATE_KEY_ENV);
+        let command = format!("echo ${}", ACCOUNTS_ENV);
         let (stdout, _) = self.run_command(&command).await?;
         ensure!(
             !stdout.is_empty(),
@@ -143,7 +191,7 @@ impl AptosContainer {
             .unwrap_or("".to_string());
 
         let command = format!(
-            "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {}",
+            "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080",
             contract_path_str, private_key, named_address_params
         );
         let (stdout, stderr) = self.run_command(&command).await?;
@@ -216,58 +264,63 @@ impl AptosContainer {
 #[cfg(test)]
 #[cfg(feature = "testing")]
 mod tests {
-    use crate::test_config::aptos_container_test;
+    use aptos_sdk::types::LocalAccount;
+
+    use crate::test_utils::aptos_container_test_utils::{lazy_aptos_container, run};
 
     use super::*;
 
     #[tokio::test]
     async fn upload_contract_test() {
-        let aptos_container = aptos_container_test::lazy_aptos_container().await.unwrap();
-
-        let module_account_address = "e01cd1568c3b43b0343d57f571fd9ad0f5774c6b57a73755b62a437cdef2c734";
-        let module_account_private_key = "0x73791ce34b2414d4afcb87561b0c442e48a3260f1c96de31da80f7cf2eec8113";
-        aptos_container.faucet(module_account_address).await.unwrap();
-
-        let mut named_addresses = HashMap::new();
-        named_addresses.insert(
-            "verifier_addr".to_string(),
-            module_account_address.to_string(),
-        );
-        aptos_container
-            .upload_contract(
-                "./contract-sample",
-                &module_account_private_key,
-                &named_addresses,
-                false,
-            )
-            .await
-            .unwrap();
-        let node_url = aptos_container.get_node_url().await.unwrap();
-        println!("node_url = {:#?}", node_url);
+        run(2, |accounts| {
+            Box::pin(async move {
+                let aptos_container = lazy_aptos_container().await?;
+                let module_account_private_key = accounts.get(0).unwrap();
+                let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let mut named_addresses = HashMap::new();
+                named_addresses.insert(
+                    "verifier_addr".to_string(),
+                    module_account.address().to_string(),
+                );
+                aptos_container
+                    .upload_contract(
+                        "./contract-sample",
+                        &module_account_private_key,
+                        &named_addresses,
+                        false,
+                    )
+                    .await.unwrap();
+                let node_url = aptos_container.get_node_url().await?;
+                println!("node_url = {:#?}", node_url);
+                Ok(())
+            })
+        }).await.unwrap();
     }
+
     #[tokio::test]
-    async fn duplicated_test2() {
-        let aptos_container = aptos_container_test::lazy_aptos_container().await.unwrap();
-
-        let module_account_address = "e01cd1568c3b43b0343d57f571fd9ad0f5774c6b57a73755b62a437cdef2c734";
-        let module_account_private_key = "0x73791ce34b2414d4afcb87561b0c442e48a3260f1c96de31da80f7cf2eec8113";
-        aptos_container.faucet(module_account_address).await.unwrap();
-
-        let mut named_addresses = HashMap::new();
-        named_addresses.insert(
-            "verifier_addr".to_string(),
-            module_account_address.to_string(),
-        );
-        aptos_container
-            .upload_contract(
-                "./contract-sample",
-                &module_account_private_key,
-                &named_addresses,
-                false,
-            )
-            .await
-            .unwrap();
-        let node_url = aptos_container.get_node_url().await.unwrap();
-        println!("node_url = {:#?}", node_url);
+    async fn upload_contract_test_duplicated() {
+        run(2, |accounts| {
+            Box::pin(async move {
+                let aptos_container = lazy_aptos_container().await?;
+                let module_account_private_key = accounts.get(0).unwrap();
+                let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let mut named_addresses = HashMap::new();
+                named_addresses.insert(
+                    "verifier_addr".to_string(),
+                    module_account.address().to_string(),
+                );
+                aptos_container
+                    .upload_contract(
+                        "./contract-sample",
+                        &module_account_private_key,
+                        &named_addresses,
+                        false,
+                    )
+                    .await.unwrap();
+                let node_url = aptos_container.get_node_url().await?;
+                println!("node_url = {:#?}", node_url);
+                Ok(())
+            })
+        }).await.unwrap();
     }
 }

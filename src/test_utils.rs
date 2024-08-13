@@ -1,5 +1,7 @@
 #[cfg(feature = "testing")]
-pub mod aptos_container_test {
+pub mod aptos_container_test_utils {
+    use std::future::Future;
+    use std::pin::Pin;
     use std::sync::{Arc, OnceLock, Weak};
 
     use anyhow::Result;
@@ -24,5 +26,11 @@ pub mod aptos_container_test {
 
             Ok(client)
         }
+    }
+
+    pub async fn run(number_of_accounts: usize, runner: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output=Result<()>>>>) -> Result<()>
+    {
+        let aptos_container = lazy_aptos_container().await?;
+        aptos_container.run(number_of_accounts, runner).await
     }
 }
