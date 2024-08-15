@@ -21,6 +21,8 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::errors::AptosContainerError::{CommandFailed, DockerExecFailed};
 
+const MOVE_TOML: &[u8] = include_bytes!("../contract-sample/Move.toml");
+
 pub struct AptosContainer {
     container: ContainerAsync<GenericImage>,
     contract_path: String,
@@ -47,7 +49,7 @@ impl AptosContainer {
             ))
             .with_entrypoint("aptos")
             .with_cmd(vec!["node", "run-localnet", "--performance", "--no-faucet"])
-            .with_startup_timeout(Duration::from_secs(5))
+            .with_startup_timeout(Duration::from_secs(10))
             .start()
             .await?;
 
@@ -182,6 +184,18 @@ impl AptosContainer {
                 ensure!(stderr.is_empty(), CommandFailed { command, stderr });
             }
         }
+
+        // Override Move.toml
+        let dest_path = contract_path.join("Move.toml");
+        let encoded_content = BASE64_STANDARD.encode(MOVE_TOML);
+        let command = format!(
+            "mkdir -p \"$(dirname '{}')\" && (echo '{}' | base64 --decode > '{}')",
+            dest_path.to_str().unwrap(),
+            encoded_content,
+            dest_path.to_str().unwrap()
+        );
+        let (_, stderr) = self.run_command(&command).await?;
+        ensure!(stderr.is_empty(), CommandFailed { command, stderr });
 
         // run move publish
         let named_address_params = named_addresses
