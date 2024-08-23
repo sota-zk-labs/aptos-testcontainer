@@ -1,27 +1,27 @@
-use std::{fs, path};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
+use std::{fs, path};
 
 use anyhow::{ensure, Error, Result};
-use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use regex::Regex;
-use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use testcontainers::core::{ExecCommand, IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
+use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::io::AsyncReadExt;
-use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::errors::AptosContainerError::{CommandFailed, DockerExecFailed};
 
-const MOVE_TOML: &[u8] = include_bytes!("../contract-sample/Move.toml");
+const MOVE_TOML: &[u8] = include_bytes!("../contract-samples/sample1/Move.toml");
 
 pub struct AptosContainer {
     container: ContainerAsync<GenericImage>,
@@ -144,6 +144,7 @@ impl AptosContainer {
         local_dir: &str,
         private_key: &str,
         named_addresses: &HashMap<String, String>,
+        sub_packages: Option<Vec<&str>>,
         override_contract: bool,
     ) -> Result<()> {
         let absolute = path::absolute(local_dir)?;
@@ -185,37 +186,57 @@ impl AptosContainer {
             }
         }
 
-        // Override Move.toml
-        let dest_path = contract_path.join("Move.toml");
-        let encoded_content = BASE64_STANDARD.encode(MOVE_TOML);
-        let command = format!(
-            "mkdir -p \"$(dirname '{}')\" && (echo '{}' | base64 --decode > '{}')",
-            dest_path.to_str().unwrap(),
-            encoded_content,
-            dest_path.to_str().unwrap()
-        );
-        let (_, stderr) = self.run_command(&command).await?;
-        ensure!(stderr.is_empty(), CommandFailed { command, stderr });
+        if sub_packages.is_none() {
+            // Override Move.toml
+            let dest_path = contract_path.join("Move.toml");
+            let encoded_content = BASE64_STANDARD.encode(MOVE_TOML);
+            let command = format!(
+                "mkdir -p \"$(dirname '{}')\" && (echo '{}' | base64 --decode > '{}')",
+                dest_path.to_str().unwrap(),
+                encoded_content,
+                dest_path.to_str().unwrap()
+            );
+            let (_, stderr) = self.run_command(&command).await?;
+            ensure!(stderr.is_empty(), CommandFailed { command, stderr });
+        }
 
         // run move publish
         let named_address_params = named_addresses
             .iter()
-            .map(|(k, v)| format!("--named-addresses {}={}", k, v))
-            .reduce(|acc, cur| format!("{} {}", acc, cur))
+            .map(|(k, v)| format!("{}={}", k, v))
+            .reduce(|acc, cur| format!("{},{}", acc, cur))
+            .map(|named_addresses| format!("--named-addresses {}", named_addresses))
             .unwrap_or("".to_string());
-
-        let command = format!(
-            "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080",
-            contract_path_str, private_key, named_address_params
-        );
-        let (stdout, stderr) = self.run_command(&command).await?;
-        ensure!(
-            stdout.contains(r#""vm_status": "Executed successfully""#),
-            CommandFailed {
-                command,
-                stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
+        match sub_packages {
+            None => {
+                let command = format!(
+                    "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080",
+                    contract_path_str, private_key, named_address_params
+                );
+                let (stdout, stderr) = self.run_command(&command).await?;
+                ensure!(
+                    stdout.contains(r#""vm_status": "Executed successfully""#),
+                    CommandFailed {
+                        command,
+                        stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
+                    });
             }
-        );
+            Some(sub_packages) => {
+                for sub_package in sub_packages {
+                    let command = format!(
+                        "cd {}/{} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080",
+                        contract_path_str, sub_package, private_key, named_address_params
+                    );
+                    let (stdout, stderr) = self.run_command(&command).await?;
+                    ensure!(
+                    stdout.contains(r#""vm_status": "Executed successfully""#),
+                    CommandFailed {
+                        command,
+                        stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
+                    });
+                }
+            }
+        }
 
         inserted_contracts.insert(absolute.to_string());
         Ok(())
@@ -285,7 +306,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn upload_contract_test() {
+    async fn upload_contract_1_test() {
         run(2, |accounts| {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
@@ -298,9 +319,10 @@ mod tests {
                 );
                 aptos_container
                     .upload_contract(
-                        "./contract-sample",
+                        "./contract-samples/sample1",
                         &module_account_private_key,
                         &named_addresses,
+                        None,
                         false,
                     )
                     .await.unwrap();
@@ -312,7 +334,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_contract_test_duplicated() {
+    async fn upload_contract_1_test_duplicated() {
         run(2, |accounts| {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
@@ -325,9 +347,42 @@ mod tests {
                 );
                 aptos_container
                     .upload_contract(
-                        "./contract-sample",
+                        "./contract-samples/sample1",
                         &module_account_private_key,
                         &named_addresses,
+                        None,
+                        false,
+                    )
+                    .await.unwrap();
+                let node_url = aptos_container.get_node_url().await?;
+                println!("node_url = {:#?}", node_url);
+                Ok(())
+            })
+        }).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upload_contract_2_test() {
+        run(2, |accounts| {
+            Box::pin(async move {
+                let aptos_container = lazy_aptos_container().await?;
+                let module_account_private_key = accounts.get(0).unwrap();
+                let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let mut named_addresses = HashMap::new();
+                named_addresses.insert(
+                    "verifier_addr".to_string(),
+                    module_account.address().to_string(),
+                );
+                named_addresses.insert(
+                    "lib_addr".to_string(),
+                    module_account.address().to_string(),
+                );
+                aptos_container
+                    .upload_contract(
+                        "./contract-samples/sample2",
+                        &module_account_private_key,
+                        &named_addresses,
+                        Some(vec!["libs", "verifier"]),
                         false,
                     )
                     .await.unwrap();

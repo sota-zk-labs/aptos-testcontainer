@@ -4,6 +4,6 @@ COPY init_accounts.sh /init_accounts.sh
 RUN chmod +x /init_accounts.sh
 RUN /init_accounts.sh
 
-COPY contract-sample /contract-sample
+COPY contract-samples/sample1 /contract-sample
 RUN cd /contract-sample && aptos move compile ||:
 RUN rm -R /contract-sample
