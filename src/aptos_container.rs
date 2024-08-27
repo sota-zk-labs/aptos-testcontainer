@@ -210,7 +210,7 @@ impl AptosContainer {
         match sub_packages {
             None => {
                 let command = format!(
-                    "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080",
+                    "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080 --included-artifacts none",
                     contract_path_str, private_key, named_address_params
                 );
                 let (stdout, stderr) = self.run_command(&command).await?;
@@ -224,7 +224,7 @@ impl AptosContainer {
             Some(sub_packages) => {
                 for sub_package in sub_packages {
                     let command = format!(
-                        "cd {}/{} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080",
+                        "cd {}/{} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080 --included-artifacts none",
                         contract_path_str, sub_package, private_key, named_address_params
                     );
                     let (stdout, stderr) = self.run_command(&command).await?;
