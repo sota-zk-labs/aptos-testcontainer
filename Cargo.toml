@@ -10,7 +10,7 @@ rand = "0.8.5"
 regex = "1.10.6"
 testcontainers = { version = "0.21.1" }
 thiserror = { version = "1.0.63" }
-tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1.39.3", features = ["rt", "rt-multi-thread", "macros"] }
 walkdir = "2.3.3"
 
 [dev-dependencies]
