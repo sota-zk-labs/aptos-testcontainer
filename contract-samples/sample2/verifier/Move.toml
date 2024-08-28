@@ -15,6 +15,6 @@ rev = "aptos-release-v1.17"
 subdir = "aptos-move/framework/aptos-framework"
 
 [dependencies]
-libs = {local = "../libs"}
+libs = { local = "../libs" }
 
 [dev-dependencies]

@@ -28,8 +28,10 @@ pub mod aptos_container_test_utils {
         }
     }
 
-    pub async fn run(number_of_accounts: usize, runner: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output=Result<()>>>>) -> Result<()>
-    {
+    pub async fn run(
+        number_of_accounts: usize,
+        runner: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output = Result<()>>>>,
+    ) -> Result<()> {
         let aptos_container = lazy_aptos_container().await?;
         aptos_container.run(number_of_accounts, runner).await
     }
