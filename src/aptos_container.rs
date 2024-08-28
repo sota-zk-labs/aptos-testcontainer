@@ -73,13 +73,22 @@ impl AptosContainer {
         ))
     }
 
-    pub async fn run(&self, number_of_accounts: usize, callback: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output=Result<()>>>>) -> Result<()>
-    {
+    pub async fn run(
+        &self,
+        number_of_accounts: usize,
+        callback: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output = Result<()>>>>,
+    ) -> Result<()> {
         self.lazy_init_accounts().await?;
 
         let mut accounts = vec![];
         // TODO: check received messages size
-        self.accounts_channel_rx.lock().await.as_mut().unwrap().recv_many(&mut accounts, number_of_accounts).await;
+        self.accounts_channel_rx
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .recv_many(&mut accounts, number_of_accounts)
+            .await;
 
         let result = callback(accounts.clone()).await;
 
@@ -96,9 +105,7 @@ impl AptosContainer {
     }
 
     pub async fn lazy_init_accounts(&self) -> Result<()> {
-        let mut guard = self.accounts_channel_tx
-            .write()
-            .await;
+        let mut guard = self.accounts_channel_tx.write().await;
 
         if guard.is_some() {
             return Ok(());
@@ -113,7 +120,11 @@ impl AptosContainer {
                 stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
             }
         );
-        let accounts = stdout.trim().split(",").map(|s| s.to_string()).collect::<Vec<String>>();
+        let accounts = stdout
+            .trim()
+            .split(",")
+            .map(|s| s.to_string())
+            .collect::<Vec<String>>();
         let (tx, rx) = mpsc::channel(accounts.len());
         for account in accounts.iter() {
             tx.send(account.to_string()).await.unwrap()
@@ -139,10 +150,7 @@ impl AptosContainer {
         Ok(stdout.trim().to_string())
     }
 
-    async fn copy_contracts(
-        &self,
-        local_dir: impl AsRef<Path>,
-    ) -> Result<PathBuf> {
+    async fn copy_contracts(&self, local_dir: impl AsRef<Path>) -> Result<PathBuf> {
         let contract_path =
             Path::new(&self.contract_path).join(AptosContainer::generate_random_string(6));
         let contract_path_str = contract_path.to_str().unwrap();
@@ -183,7 +191,7 @@ impl AptosContainer {
         local_dir: impl AsRef<Path>,
         private_key: &str,
         named_addresses: &HashMap<String, String>,
-        script_paths: Vec<&str>,
+        script_paths: &Vec<&str>,
     ) -> Result<()> {
         let contract_path = self.copy_contracts(local_dir).await?;
         let contract_path_str = contract_path.to_str().unwrap();
@@ -198,7 +206,9 @@ impl AptosContainer {
             // compile script
             let command = format!(
                 "cd {}/{} && aptos move compile-script --skip-fetch-latest-git-deps {}",
-                contract_path_str, script_path, named_address_params.as_str()
+                contract_path_str,
+                script_path,
+                named_address_params.as_str()
             );
             let (stdout, stderr) = self.run_command(&command).await?;
             ensure!(
@@ -277,7 +287,8 @@ impl AptosContainer {
                     CommandFailed {
                         command,
                         stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
-                    });
+                    }
+                );
             }
             Some(sub_packages) => {
                 for sub_package in sub_packages {
@@ -287,11 +298,12 @@ impl AptosContainer {
                     );
                     let (stdout, stderr) = self.run_command(&command).await?;
                     ensure!(
-                    stdout.contains(r#""vm_status": "Executed successfully""#),
-                    CommandFailed {
-                        command,
-                        stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
-                    });
+                        stdout.contains(r#""vm_status": "Executed successfully""#),
+                        CommandFailed {
+                            command,
+                            stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
+                        }
+                    );
                 }
             }
         }
@@ -369,29 +381,31 @@ mod tests {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
                 let module_account_private_key = accounts.first().unwrap();
-                let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let module_account =
+                    LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
                 let mut named_addresses = HashMap::new();
                 named_addresses.insert(
                     "verifier_addr".to_string(),
                     module_account.address().to_string(),
                 );
-                named_addresses.insert(
-                    "lib_addr".to_string(),
-                    module_account.address().to_string(),
-                );
+                named_addresses
+                    .insert("lib_addr".to_string(), module_account.address().to_string());
                 aptos_container
                     .run_script(
                         "./contract-samples/sample2",
                         module_account_private_key,
                         &named_addresses,
-                        vec!["verifier"],
+                        &vec!["verifier"],
                     )
-                    .await.unwrap();
+                    .await
+                    .unwrap();
                 let node_url = aptos_container.get_node_url().await?;
                 println!("node_url = {:#?}", node_url);
                 Ok(())
             })
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
     }
     #[tokio::test]
     async fn upload_contract_1_test() {
@@ -399,7 +413,8 @@ mod tests {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
                 let module_account_private_key = accounts.first().unwrap();
-                let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let module_account =
+                    LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
                 let mut named_addresses = HashMap::new();
                 named_addresses.insert(
                     "verifier_addr".to_string(),
@@ -413,12 +428,15 @@ mod tests {
                         None,
                         false,
                     )
-                    .await.unwrap();
+                    .await
+                    .unwrap();
                 let node_url = aptos_container.get_node_url().await?;
                 println!("node_url = {:#?}", node_url);
                 Ok(())
             })
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -427,7 +445,8 @@ mod tests {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
                 let module_account_private_key = accounts.first().unwrap();
-                let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let module_account =
+                    LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
                 let mut named_addresses = HashMap::new();
                 named_addresses.insert(
                     "verifier_addr".to_string(),
@@ -441,12 +460,15 @@ mod tests {
                         None,
                         false,
                     )
-                    .await.unwrap();
+                    .await
+                    .unwrap();
                 let node_url = aptos_container.get_node_url().await?;
                 println!("node_url = {:#?}", node_url);
                 Ok(())
             })
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -455,16 +477,15 @@ mod tests {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
                 let module_account_private_key = accounts.first().unwrap();
-                let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let module_account =
+                    LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
                 let mut named_addresses = HashMap::new();
                 named_addresses.insert(
                     "verifier_addr".to_string(),
                     module_account.address().to_string(),
                 );
-                named_addresses.insert(
-                    "lib_addr".to_string(),
-                    module_account.address().to_string(),
-                );
+                named_addresses
+                    .insert("lib_addr".to_string(), module_account.address().to_string());
                 aptos_container
                     .upload_contract(
                         "./contract-samples/sample2",
@@ -473,11 +494,14 @@ mod tests {
                         Some(vec!["libs", "verifier"]),
                         false,
                     )
-                    .await.unwrap();
+                    .await
+                    .unwrap();
                 let node_url = aptos_container.get_node_url().await?;
                 println!("node_url = {:#?}", node_url);
                 Ok(())
             })
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
     }
 }
