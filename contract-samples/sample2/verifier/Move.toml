@@ -1,11 +1,11 @@
 [package]
+authors = []
 name = "navori"
 version = "1.0.0"
-authors = []
 
 [addresses]
-verifier_addr = "_"
 lib_addr = "_"
+verifier_addr = "_"
 
 [dev-addresses]
 
