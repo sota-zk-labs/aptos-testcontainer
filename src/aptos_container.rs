@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
 use std::{fs, path};
@@ -139,21 +139,10 @@ impl AptosContainer {
         Ok(stdout.trim().to_string())
     }
 
-    pub async fn upload_contract(
+    async fn copy_contracts(
         &self,
-        local_dir: &str,
-        private_key: &str,
-        named_addresses: &HashMap<String, String>,
-        sub_packages: Option<Vec<&str>>,
-        override_contract: bool,
-    ) -> Result<()> {
-        let absolute = path::absolute(local_dir)?;
-        let absolute = absolute.to_str().unwrap();
-        let mut inserted_contracts = self.contracts.lock().await;
-        if !override_contract && inserted_contracts.contains(absolute) {
-            return Ok(());
-        }
-
+        local_dir: impl AsRef<Path>,
+    ) -> Result<PathBuf> {
         let contract_path =
             Path::new(&self.contract_path).join(AptosContainer::generate_random_string(6));
         let contract_path_str = contract_path.to_str().unwrap();
@@ -164,9 +153,10 @@ impl AptosContainer {
         ensure!(stderr.is_empty(), CommandFailed { command, stderr });
 
         // copy files into the container
-        for entry in AptosContainer::get_files(local_dir) {
+        let local_dir_str = local_dir.as_ref().to_str().unwrap();
+        for entry in AptosContainer::get_files(local_dir_str) {
             let source_path = entry.path();
-            let relative_path = source_path.strip_prefix(local_dir).unwrap();
+            let relative_path = source_path.strip_prefix(local_dir_str)?;
             let dest_path = contract_path.join(relative_path);
             let content = fs::read(source_path)?;
             let encoded_content = BASE64_STANDARD.encode(&content);
@@ -185,6 +175,74 @@ impl AptosContainer {
                 ensure!(stderr.is_empty(), CommandFailed { command, stderr });
             }
         }
+        Ok(contract_path)
+    }
+
+    pub async fn run_script(
+        &self,
+        local_dir: impl AsRef<Path>,
+        private_key: &str,
+        named_addresses: &HashMap<String, String>,
+        script_paths: Vec<&str>,
+    ) -> Result<()> {
+        let contract_path = self.copy_contracts(local_dir).await?;
+        let contract_path_str = contract_path.to_str().unwrap();
+        let named_address_params = named_addresses
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .reduce(|acc, cur| format!("{},{}", acc, cur))
+            .map(|named_addresses| format!("--named-addresses {}", named_addresses))
+            .unwrap_or("".to_string());
+
+        for script_path in script_paths {
+            // compile script
+            let command = format!(
+                "cd {}/{} && aptos move compile-script --skip-fetch-latest-git-deps {}",
+                contract_path_str, script_path, named_address_params.as_str()
+            );
+            let (stdout, stderr) = self.run_command(&command).await?;
+            ensure!(
+                stdout.contains(r#""script_location":"#),
+                CommandFailed {
+                    command,
+                    stderr: format!("stdout: {} \n\n stderr: {}", stdout, stderr)
+                }
+            );
+
+            // run script
+            let command = format!(
+                "cd {}/{} && aptos move run-script  --compiled-script-path script.mv --private-key {} --url http://localhost:8080 --assume-yes",
+                contract_path_str, script_path, private_key
+            );
+            let (stdout, stderr) = self.run_command(&command).await?;
+            ensure!(
+                stdout.contains(r#""vm_status": "Executed successfully""#),
+                CommandFailed {
+                    command,
+                    stderr: format!("stdout: {} \n\n stderr: {}", &stdout, stderr)
+                }
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn upload_contract(
+        &self,
+        local_dir: &str,
+        private_key: &str,
+        named_addresses: &HashMap<String, String>,
+        sub_packages: Option<Vec<&str>>,
+        override_contract: bool,
+    ) -> Result<()> {
+        let absolute = path::absolute(local_dir)?;
+        let absolute = absolute.to_str().unwrap();
+        let mut inserted_contracts = self.contracts.lock().await;
+        if !override_contract && inserted_contracts.contains(absolute) {
+            return Ok(());
+        }
+
+        let contract_path = self.copy_contracts(local_dir).await?;
+        let contract_path_str = contract_path.to_str().unwrap();
 
         if sub_packages.is_none() {
             // Override Move.toml
@@ -306,11 +364,41 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn run_script_test() {
+        run(2, |accounts| {
+            Box::pin(async move {
+                let aptos_container = lazy_aptos_container().await?;
+                let module_account_private_key = accounts.first().unwrap();
+                let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let mut named_addresses = HashMap::new();
+                named_addresses.insert(
+                    "verifier_addr".to_string(),
+                    module_account.address().to_string(),
+                );
+                named_addresses.insert(
+                    "lib_addr".to_string(),
+                    module_account.address().to_string(),
+                );
+                aptos_container
+                    .run_script(
+                        "./contract-samples/sample2",
+                        module_account_private_key,
+                        &named_addresses,
+                        vec!["verifier"],
+                    )
+                    .await.unwrap();
+                let node_url = aptos_container.get_node_url().await?;
+                println!("node_url = {:#?}", node_url);
+                Ok(())
+            })
+        }).await.unwrap();
+    }
+    #[tokio::test]
     async fn upload_contract_1_test() {
         run(2, |accounts| {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
-                let module_account_private_key = accounts.get(0).unwrap();
+                let module_account_private_key = accounts.first().unwrap();
                 let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
                 let mut named_addresses = HashMap::new();
                 named_addresses.insert(
@@ -320,7 +408,7 @@ mod tests {
                 aptos_container
                     .upload_contract(
                         "./contract-samples/sample1",
-                        &module_account_private_key,
+                        module_account_private_key,
                         &named_addresses,
                         None,
                         false,
@@ -338,7 +426,7 @@ mod tests {
         run(2, |accounts| {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
-                let module_account_private_key = accounts.get(0).unwrap();
+                let module_account_private_key = accounts.first().unwrap();
                 let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
                 let mut named_addresses = HashMap::new();
                 named_addresses.insert(
@@ -348,7 +436,7 @@ mod tests {
                 aptos_container
                     .upload_contract(
                         "./contract-samples/sample1",
-                        &module_account_private_key,
+                        module_account_private_key,
                         &named_addresses,
                         None,
                         false,
@@ -366,7 +454,7 @@ mod tests {
         run(2, |accounts| {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
-                let module_account_private_key = accounts.get(0).unwrap();
+                let module_account_private_key = accounts.first().unwrap();
                 let module_account = LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
                 let mut named_addresses = HashMap::new();
                 named_addresses.insert(
@@ -380,7 +468,7 @@ mod tests {
                 aptos_container
                     .upload_contract(
                         "./contract-samples/sample2",
-                        &module_account_private_key,
+                        module_account_private_key,
                         &named_addresses,
                         Some(vec!["libs", "verifier"]),
                         false,
