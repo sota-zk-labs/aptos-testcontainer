@@ -6,8 +6,11 @@ version = "0.1.0"
 [dependencies]
 anyhow = { version = "1.0.71" }
 base64 = "0.22.1"
+config = { version = "0.14.0" }
+log = "0.4.22"
 rand = "0.8.5"
 regex = "1.10.6"
+serde = { version = "1.0" }
 testcontainers = { version = "0.21.1" }
 thiserror = { version = "1.0.63" }
 tokio = { version = "1.39.3", features = ["rt", "rt-multi-thread", "macros"] }
@@ -15,6 +18,7 @@ walkdir = "2.3.3"
 
 [dev-dependencies]
 aptos-sdk = { git = "https://github.com/aptos-labs/aptos-core", branch = "mainnet" }
+test-log = { version = "0.2.16" }
 
 [features]
 testing = []

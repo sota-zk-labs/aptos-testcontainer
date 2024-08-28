@@ -19,11 +19,17 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::config::EnvConfig;
 use crate::errors::AptosContainerError::{CommandFailed, DockerExecFailed};
 
 const MOVE_TOML: &[u8] = include_bytes!("../contract-samples/sample1/Move.toml");
 
 pub struct AptosContainer {
+    node_url: String,
+    chain_id: u8,
+    deploy_contract: bool,
+    override_accounts: Option<Vec<String>>,
+
     container: ContainerAsync<GenericImage>,
     contract_path: String,
     contracts: Mutex<HashSet<String>>,
@@ -42,19 +48,49 @@ const CONTENT_MAX_CHARS: usize = 120000; // 120 KB
 
 impl AptosContainer {
     pub async fn init() -> Result<Self> {
+        let config = EnvConfig::new();
+        let enable_node = config.enable_node.unwrap_or(true);
+        let (entrypoint, cmd, wait_for) = if enable_node {
+            (
+                "aptos",
+                vec!["node", "run-localnet", "--performance", "--no-faucet"],
+                WaitFor::message_on_stderr("Setup is complete, you can now use the localnet!"),
+            )
+        } else {
+            ("/bin/sh", vec!["-c", "sleep infinity"], WaitFor::Nothing)
+        };
+
         let container = GenericImage::new(APTOS_IMAGE, APTOS_IMAGE_TAG)
             .with_exposed_port(8080.tcp())
-            .with_wait_for(WaitFor::message_on_stderr(
-                "Setup is complete, you can now use the localnet!",
-            ))
-            .with_entrypoint("aptos")
-            .with_cmd(vec!["node", "run-localnet", "--performance", "--no-faucet"])
+            .with_wait_for(wait_for)
+            .with_entrypoint(entrypoint)
+            .with_cmd(cmd)
             .with_startup_timeout(Duration::from_secs(10))
             .start()
             .await?;
 
+        let (node_url, deploy_contract, override_accounts, chain_id) = if enable_node {
+            let node_url = format!(
+                "http://{}:{}",
+                container.get_host().await?,
+                container.get_host_port_ipv4(8080).await?
+            );
+            (node_url.to_string(), true, None, 4)
+        } else {
+            (
+                config.node_url.unwrap().first().unwrap().to_string(),
+                config.deploy_contract.unwrap_or(true),
+                Some(config.accounts.unwrap()),
+                config.chain_id.unwrap(),
+            )
+        };
+
         Ok(Self {
+            node_url,
+            deploy_contract,
+            chain_id,
             container,
+            override_accounts,
             contract_path: "/contract".to_string(),
             contracts: Default::default(),
             accounts: Default::default(),
@@ -65,12 +101,12 @@ impl AptosContainer {
 }
 
 impl AptosContainer {
-    pub async fn get_node_url(&self) -> Result<String> {
-        Ok(format!(
-            "http://{}:{}",
-            self.container.get_host().await?,
-            self.container.get_host_port_ipv4(8080).await?
-        ))
+    pub fn get_node_url(&self) -> String {
+        self.node_url.clone()
+    }
+
+    pub fn get_chain_id(&self) -> u8 {
+        self.chain_id
     }
 
     pub async fn run(
@@ -80,31 +116,47 @@ impl AptosContainer {
     ) -> Result<()> {
         self.lazy_init_accounts().await?;
 
-        let mut accounts = vec![];
-        // TODO: check received messages size
-        self.accounts_channel_rx
-            .lock()
-            .await
-            .as_mut()
-            .unwrap()
-            .recv_many(&mut accounts, number_of_accounts)
-            .await;
+        let accounts = match &self.override_accounts {
+            Some(accounts) => accounts.clone(),
+            None => {
+                // TODO: check received messages size
+                let mut result = vec![];
+                self.accounts_channel_rx
+                    .lock()
+                    .await
+                    .as_mut()
+                    .unwrap()
+                    .recv_many(&mut result, number_of_accounts)
+                    .await;
+                result
+            }
+        };
 
         let result = callback(accounts.clone()).await;
-
-        let guard = self.accounts_channel_tx.read().await;
-        for account in accounts {
-            guard.as_ref().unwrap().send(account).await.unwrap();
+        if self.override_accounts.is_none() {
+            let guard = self.accounts_channel_tx.read().await;
+            for account in accounts {
+                guard.as_ref().unwrap().send(account).await?;
+            }
         }
         result
     }
 
     pub async fn get_initiated_accounts(&self) -> Result<Vec<String>> {
-        self.lazy_init_accounts().await?;
-        Ok(self.accounts.read().await.clone())
+        match &self.override_accounts {
+            Some(accounts) => Ok(accounts.clone()),
+            None => {
+                self.lazy_init_accounts().await?;
+                Ok(self.accounts.read().await.clone())
+            }
+        }
     }
 
     pub async fn lazy_init_accounts(&self) -> Result<()> {
+        if self.override_accounts.is_some() {
+            return Ok(());
+        }
+
         let mut guard = self.accounts_channel_tx.write().await;
 
         if guard.is_some() {
@@ -127,7 +179,7 @@ impl AptosContainer {
             .collect::<Vec<String>>();
         let (tx, rx) = mpsc::channel(accounts.len());
         for account in accounts.iter() {
-            tx.send(account.to_string()).await.unwrap()
+            tx.send(account.to_string()).await?
         }
 
         *self.accounts.write().await = accounts;
@@ -135,19 +187,6 @@ impl AptosContainer {
 
         *guard = Some(tx);
         Ok(())
-    }
-
-    pub async fn get_root_account_private_key(&self) -> Result<String> {
-        let command = format!("echo ${}", ACCOUNTS_ENV);
-        let (stdout, _) = self.run_command(&command).await?;
-        ensure!(
-            !stdout.is_empty(),
-            CommandFailed {
-                command,
-                stderr: "env not found".to_string()
-            }
-        );
-        Ok(stdout.trim().to_string())
     }
 
     async fn copy_contracts(&self, local_dir: impl AsRef<Path>) -> Result<PathBuf> {
@@ -221,8 +260,8 @@ impl AptosContainer {
 
             // run script
             let command = format!(
-                "cd {}/{} && aptos move run-script  --compiled-script-path script.mv --private-key {} --url http://localhost:8080 --assume-yes",
-                contract_path_str, script_path, private_key
+                "cd {}/{} && aptos move run-script  --compiled-script-path script.mv --private-key {} --url {} --assume-yes",
+                contract_path_str, script_path, private_key, self.node_url
             );
             let (stdout, stderr) = self.run_command(&command).await?;
             ensure!(
@@ -244,6 +283,10 @@ impl AptosContainer {
         sub_packages: Option<Vec<&str>>,
         override_contract: bool,
     ) -> Result<()> {
+        if !self.deploy_contract {
+            return Ok(());
+        }
+
         let absolute = path::absolute(local_dir)?;
         let absolute = absolute.to_str().unwrap();
         let mut inserted_contracts = self.contracts.lock().await;
@@ -278,8 +321,8 @@ impl AptosContainer {
         match sub_packages {
             None => {
                 let command = format!(
-                    "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080 --included-artifacts none",
-                    contract_path_str, private_key, named_address_params
+                    "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url {} --included-artifacts none",
+                    contract_path_str, private_key, named_address_params, self.node_url
                 );
                 let (stdout, stderr) = self.run_command(&command).await?;
                 ensure!(
@@ -293,8 +336,8 @@ impl AptosContainer {
             Some(sub_packages) => {
                 for sub_package in sub_packages {
                     let command = format!(
-                        "cd {}/{} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url http://localhost:8080 --included-artifacts none",
-                        contract_path_str, sub_package, private_key, named_address_params
+                        "cd {}/{} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url {} --included-artifacts none",
+                        contract_path_str, sub_package, private_key, named_address_params, self.node_url
                     );
                     let (stdout, stderr) = self.run_command(&command).await?;
                     ensure!(
@@ -312,7 +355,7 @@ impl AptosContainer {
         Ok(())
     }
 
-    pub fn get_files(local_dir: &str) -> Vec<DirEntry> {
+    fn get_files(local_dir: &str) -> Vec<DirEntry> {
         WalkDir::new(local_dir)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -338,6 +381,7 @@ impl AptosContainer {
             })
             .collect()
     }
+
     pub async fn run_command(&self, command: &str) -> Result<(String, String)> {
         let mut result = self
             .container
@@ -370,12 +414,14 @@ impl AptosContainer {
 #[cfg(feature = "testing")]
 mod tests {
     use aptos_sdk::types::LocalAccount;
+    use log::info;
+    use test_log::test;
 
     use crate::test_utils::aptos_container_test_utils::{lazy_aptos_container, run};
 
     use super::*;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn run_script_test() {
         run(2, |accounts| {
             Box::pin(async move {
@@ -399,15 +445,16 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                let node_url = aptos_container.get_node_url().await?;
-                println!("node_url = {:#?}", node_url);
+                let node_url = aptos_container.get_node_url();
+                info!("node_url = {:#?}", node_url);
                 Ok(())
             })
         })
         .await
         .unwrap();
     }
-    #[tokio::test]
+
+    #[test(tokio::test)]
     async fn upload_contract_1_test() {
         run(2, |accounts| {
             Box::pin(async move {
@@ -430,8 +477,8 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                let node_url = aptos_container.get_node_url().await?;
-                println!("node_url = {:#?}", node_url);
+                let node_url = aptos_container.get_node_url();
+                info!("node_url = {:#?}", node_url);
                 Ok(())
             })
         })
@@ -439,7 +486,7 @@ mod tests {
         .unwrap();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn upload_contract_1_test_duplicated() {
         run(2, |accounts| {
             Box::pin(async move {
@@ -462,8 +509,8 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                let node_url = aptos_container.get_node_url().await?;
-                println!("node_url = {:#?}", node_url);
+                let node_url = aptos_container.get_node_url();
+                info!("node_url = {:#?}", node_url);
                 Ok(())
             })
         })
@@ -471,7 +518,7 @@ mod tests {
         .unwrap();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn upload_contract_2_test() {
         run(2, |accounts| {
             Box::pin(async move {
@@ -496,7 +543,7 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                let node_url = aptos_container.get_node_url().await?;
+                let node_url = aptos_container.get_node_url();
                 println!("node_url = {:#?}", node_url);
                 Ok(())
             })
