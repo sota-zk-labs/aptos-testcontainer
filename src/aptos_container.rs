@@ -26,6 +26,7 @@ const MOVE_TOML: &[u8] = include_bytes!("../contract-samples/sample1/Move.toml")
 
 pub struct AptosContainer {
     node_url: String,
+    inner_url: String,
     chain_id: u8,
     deploy_contract: bool,
     override_accounts: Option<Vec<String>>,
@@ -69,16 +70,18 @@ impl AptosContainer {
             .start()
             .await?;
 
-        let (node_url, deploy_contract, override_accounts, chain_id) = if enable_node {
+        let (node_url, inner_url, deploy_contract, override_accounts, chain_id) = if enable_node {
             let node_url = format!(
                 "http://{}:{}",
                 container.get_host().await?,
                 container.get_host_port_ipv4(8080).await?
             );
-            (node_url.to_string(), true, None, 4)
+            (node_url.to_string(), "http://localhost:8080".to_string(), true, None, 4)
         } else {
+            let node_url = config.node_url.unwrap().first().unwrap().to_string();
             (
-                config.node_url.unwrap().first().unwrap().to_string(),
+                node_url.clone(),
+                node_url,
                 config.deploy_contract.unwrap_or(true),
                 Some(config.accounts.unwrap()),
                 config.chain_id.unwrap(),
@@ -87,6 +90,7 @@ impl AptosContainer {
 
         Ok(Self {
             node_url,
+            inner_url,
             deploy_contract,
             chain_id,
             container,
@@ -112,7 +116,7 @@ impl AptosContainer {
     pub async fn run(
         &self,
         number_of_accounts: usize,
-        callback: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output = Result<()>>>>,
+        callback: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output=Result<()>>>>,
     ) -> Result<()> {
         self.lazy_init_accounts().await?;
 
@@ -261,7 +265,7 @@ impl AptosContainer {
             // run script
             let command = format!(
                 "cd {}/{} && aptos move run-script  --compiled-script-path script.mv --private-key {} --url {} --assume-yes",
-                contract_path_str, script_path, private_key, self.node_url
+                contract_path_str, script_path, private_key, self.inner_url
             );
             let (stdout, stderr) = self.run_command(&command).await?;
             ensure!(
@@ -322,7 +326,7 @@ impl AptosContainer {
             None => {
                 let command = format!(
                     "cd {} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url {} --included-artifacts none",
-                    contract_path_str, private_key, named_address_params, self.node_url
+                    contract_path_str, private_key, named_address_params, self.inner_url
                 );
                 let (stdout, stderr) = self.run_command(&command).await?;
                 ensure!(
@@ -337,7 +341,7 @@ impl AptosContainer {
                 for sub_package in sub_packages {
                     let command = format!(
                         "cd {}/{} && aptos move publish --skip-fetch-latest-git-deps --private-key {} --assume-yes {} --url {} --included-artifacts none",
-                        contract_path_str, sub_package, private_key, named_address_params, self.node_url
+                        contract_path_str, sub_package, private_key, named_address_params, self.inner_url
                     );
                     let (stdout, stderr) = self.run_command(&command).await?;
                     ensure!(
@@ -450,8 +454,8 @@ mod tests {
                 Ok(())
             })
         })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
     }
 
     #[test(tokio::test)]
@@ -482,8 +486,8 @@ mod tests {
                 Ok(())
             })
         })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
     }
 
     #[test(tokio::test)]
@@ -514,8 +518,8 @@ mod tests {
                 Ok(())
             })
         })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
     }
 
     #[test(tokio::test)]
@@ -548,7 +552,7 @@ mod tests {
                 Ok(())
             })
         })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
     }
 }
