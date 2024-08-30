@@ -8,6 +8,7 @@ use std::{fs, path};
 use anyhow::{ensure, Error, Result};
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use log::debug;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use regex::Regex;
@@ -17,6 +18,7 @@ use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::time::Instant;
 use walkdir::{DirEntry, WalkDir};
 
 use crate::config::EnvConfig;
@@ -242,7 +244,10 @@ impl AptosContainer {
         named_addresses: &HashMap<String, String>,
         script_paths: &Vec<&str>,
     ) -> Result<()> {
+        let now = Instant::now();
         let contract_path = self.copy_contracts(local_dir).await?;
+        debug!("copy_contracts takes: {:.2?}", now.elapsed());
+
         let contract_path_str = contract_path.to_str().unwrap();
         let named_address_params = named_addresses
             .iter()
@@ -305,7 +310,10 @@ impl AptosContainer {
             return Ok(());
         }
 
+        let now = Instant::now();
         let contract_path = self.copy_contracts(local_dir).await?;
+        debug!("copy_contracts takes: {:.2?}", now.elapsed());
+
         let contract_path_str = contract_path.to_str().unwrap();
 
         if sub_packages.is_none() {
@@ -372,6 +380,10 @@ impl AptosContainer {
             .filter_map(|e| e.ok())
             .filter_map(|entry| {
                 let source_path = entry.path();
+                // ignore build folders
+                if source_path.to_str().unwrap().contains("/build/") {
+                    return None;
+                }
                 if !source_path.is_file() {
                     return None;
                 }
@@ -428,9 +440,8 @@ mod tests {
     use log::info;
     use test_log::test;
 
-    use crate::test_utils::aptos_container_test_utils::{lazy_aptos_container, run};
-
     use super::*;
+    use crate::test_utils::aptos_container_test_utils::{lazy_aptos_container, run};
 
     #[test(tokio::test)]
     async fn run_script_test() {
