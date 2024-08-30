@@ -76,7 +76,13 @@ impl AptosContainer {
                 container.get_host().await?,
                 container.get_host_port_ipv4(8080).await?
             );
-            (node_url.to_string(), "http://localhost:8080".to_string(), true, None, 4)
+            (
+                node_url.to_string(),
+                "http://localhost:8080".to_string(),
+                true,
+                None,
+                4,
+            )
         } else {
             let node_url = config.node_url.unwrap().first().unwrap().to_string();
             (
@@ -116,7 +122,7 @@ impl AptosContainer {
     pub async fn run(
         &self,
         number_of_accounts: usize,
-        callback: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output=Result<()>>>>,
+        callback: impl FnOnce(Vec<String>) -> Pin<Box<dyn Future<Output = Result<()>>>>,
     ) -> Result<()> {
         self.lazy_init_accounts().await?;
 
@@ -292,9 +298,10 @@ impl AptosContainer {
         }
 
         let absolute = path::absolute(local_dir)?;
-        let absolute = absolute.to_str().unwrap();
+        let absolute_contract_path = absolute.to_str().unwrap();
+        let contract_key = format!("{}:{}", private_key, absolute_contract_path);
         let mut inserted_contracts = self.contracts.lock().await;
-        if !override_contract && inserted_contracts.contains(absolute) {
+        if !override_contract && inserted_contracts.contains(&contract_key) {
             return Ok(());
         }
 
@@ -355,7 +362,7 @@ impl AptosContainer {
             }
         }
 
-        inserted_contracts.insert(absolute.to_string());
+        inserted_contracts.insert(contract_key);
         Ok(())
     }
 
@@ -454,8 +461,8 @@ mod tests {
                 Ok(())
             })
         })
-            .await
-            .unwrap();
+        .await
+        .unwrap();
     }
 
     #[test(tokio::test)]
@@ -486,8 +493,8 @@ mod tests {
                 Ok(())
             })
         })
-            .await
-            .unwrap();
+        .await
+        .unwrap();
     }
 
     #[test(tokio::test)]
@@ -518,8 +525,8 @@ mod tests {
                 Ok(())
             })
         })
-            .await
-            .unwrap();
+        .await
+        .unwrap();
     }
 
     #[test(tokio::test)]
@@ -552,7 +559,7 @@ mod tests {
                 Ok(())
             })
         })
-            .await
-            .unwrap();
+        .await
+        .unwrap();
     }
 }
