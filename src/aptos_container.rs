@@ -436,9 +436,9 @@ impl AptosContainer {
 #[cfg(test)]
 #[cfg(feature = "testing")]
 mod tests {
-    use aptos_sdk::types::LocalAccount;
     use log::info;
     use test_log::test;
+    use tiny_keccak::Hasher;
 
     use super::*;
     use crate::test_utils::aptos_container_test_utils::{lazy_aptos_container, run};
@@ -449,15 +449,11 @@ mod tests {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
                 let module_account_private_key = accounts.first().unwrap();
-                let module_account =
-                    LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let module_account_address = get_account_address(module_account_private_key);
+
                 let mut named_addresses = HashMap::new();
-                named_addresses.insert(
-                    "verifier_addr".to_string(),
-                    module_account.address().to_string(),
-                );
-                named_addresses
-                    .insert("lib_addr".to_string(), module_account.address().to_string());
+                named_addresses.insert("verifier_addr".to_string(), module_account_address.clone());
+                named_addresses.insert("lib_addr".to_string(), module_account_address);
                 aptos_container
                     .run_script(
                         "./contract-samples/sample2",
@@ -482,13 +478,10 @@ mod tests {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
                 let module_account_private_key = accounts.first().unwrap();
-                let module_account =
-                    LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let module_account_address = get_account_address(module_account_private_key);
+
                 let mut named_addresses = HashMap::new();
-                named_addresses.insert(
-                    "verifier_addr".to_string(),
-                    module_account.address().to_string(),
-                );
+                named_addresses.insert("verifier_addr".to_string(), module_account_address);
                 aptos_container
                     .upload_contract(
                         "./contract-samples/sample1",
@@ -514,13 +507,11 @@ mod tests {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
                 let module_account_private_key = accounts.first().unwrap();
-                let module_account =
-                    LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+
+                let module_account_address = get_account_address(module_account_private_key);
+
                 let mut named_addresses = HashMap::new();
-                named_addresses.insert(
-                    "verifier_addr".to_string(),
-                    module_account.address().to_string(),
-                );
+                named_addresses.insert("verifier_addr".to_string(), module_account_address);
                 aptos_container
                     .upload_contract(
                         "./contract-samples/sample1",
@@ -546,15 +537,10 @@ mod tests {
             Box::pin(async move {
                 let aptos_container = lazy_aptos_container().await?;
                 let module_account_private_key = accounts.first().unwrap();
-                let module_account =
-                    LocalAccount::from_private_key(module_account_private_key, 0).unwrap();
+                let module_account_address = get_account_address(module_account_private_key);
                 let mut named_addresses = HashMap::new();
-                named_addresses.insert(
-                    "verifier_addr".to_string(),
-                    module_account.address().to_string(),
-                );
-                named_addresses
-                    .insert("lib_addr".to_string(), module_account.address().to_string());
+                named_addresses.insert("verifier_addr".to_string(), module_account_address.clone());
+                named_addresses.insert("lib_addr".to_string(), module_account_address);
                 aptos_container
                     .upload_contract(
                         "./contract-samples/sample2",
@@ -572,5 +558,27 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    fn get_account_address(private_key: &String) -> String {
+        let signing_key = ed25519_dalek::SigningKey::try_from(
+            hex::decode(private_key.trim_start_matches("0x"))
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap();
+        let public_key = ed25519_dalek::VerifyingKey::from(&signing_key);
+        let mut public_key_bytes = public_key.to_bytes().to_vec();
+        public_key_bytes.push(0);
+        let mut sha3 = tiny_keccak::Sha3::v256();
+        sha3.update(&public_key_bytes);
+
+        let mut out_bytes = [0; 32];
+        sha3.finalize(&mut out_bytes);
+        let mut public_key = "".to_string();
+        for byte in out_bytes.iter() {
+            public_key = format!("{}{:02x}", public_key, byte);
+        }
+        public_key
     }
 }
