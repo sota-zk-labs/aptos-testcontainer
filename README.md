@@ -2,6 +2,7 @@
 
 [![License](https://img.shields.io/github/license/sota-zk-labs/aptos-testcontainer)](./LICENSE)
 [![Continuous Integration](https://github.com/sota-zk-labs/aptos-testcontainer/actions/workflows/ci.yaml/badge.svg)](https://github.com/sota-zk-labs/aptos-testcontainer/actions/workflows/ci.yaml/badge.svg)
+[![codecov](https://codecov.io/github/sota-zk-labs/aptos-testcontainer/branch/master/graph/badge.svg?token=CKEWC8QC0E)](https://codecov.io/github/sota-zk-labs/aptos-testcontainer)
 
 ## Introduction
 
@@ -13,10 +14,12 @@ Test container for Aptos Node
 
 ### Environment Variables
 
-APTOS_TESTCONTAINER__ACCOUNTS="0xe47491c27051639d2bc0167af9370dd39f6df3479edfb51658a2eb0a16239cf6,0xdbba3d6050eab8b8683598fad3f80ba1282664a9fca018d629fe883e59889241"
-APTOS_TESTCONTAINER__NODE_URL="https://api.testnet.aptoslabs.com/v1"
-APTOS_TESTCONTAINER__ENABLE_NODE=true
-APTOS_TESTCONTAINER__DEPLOY_CONTRACT=true
-APTOS_TESTCONTAINER__CHAIN_ID=2
+| ENV                                     | EXAMPLE                              | NOTE                                                                                           |
+|-----------------------------------------|--------------------------------------|------------------------------------------------------------------------------------------------|
+| APTOS\_TESTCONTAINER\_\_ENABLE_NODE     | true                                 | Whether to connect to an Aptos node within the container (set this to false to use other envs) |
+| APTOS\_TESTCONTAINER\_\_ACCOUNTS        | private_1,private_2                  | Accounts used in tests, all tests will be provided with these                                  |
+| APTOS\_TESTCONTAINER\_\_NODE_URL        | https://api.testnet.aptoslabs.com/v1 | Aptos Node Url to connect                                                                      |
+| APTOS\_TESTCONTAINER\_\_DEPLOY_CONTRACT | true                                 | Whether to deploy any contract                                                                 |
+| APTOS\_TESTCONTAINER\_\_CHAIN_ID        | 2                                    | Chain ID                                                                                       |
 
 ## Configuration
