@@ -71,3 +71,17 @@ jobs:
           token: ${{secrets.CODECOV_TOKEN}} # not required for public repos
           verbose: true
           fail_ci_if_error: true
+  publish-crates:
+    name: Publish to Crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+
+      - name: cargo login
+        run: |
+          cargo login ${{secrets.CRATES_IO_TOKEN}}
+
+      - name: cargo publish
+        run: |
+          cargo publish --allow-dirty

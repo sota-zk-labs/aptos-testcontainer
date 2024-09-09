@@ -3,7 +3,8 @@ description = "Test container for Apotos Node"
 edition = "2021"
 license = "MIT"
 name = "aptos-testcontainer"
-version = "0.1.0"
+repository = "https://github.com/sota-zk-labs/aptos-testcontainer.git"
+version = "0.1.1"
 
 [dependencies]
 anyhow = { version = "1.0.71" }
