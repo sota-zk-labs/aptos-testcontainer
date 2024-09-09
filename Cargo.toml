@@ -1,5 +1,7 @@
 [package]
+description = "Test container for Apotos Node"
 edition = "2021"
+license = "MIT"
 name = "aptos-testcontainer"
 version = "0.1.0"
 

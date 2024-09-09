@@ -8,13 +8,6 @@
 
 This module provides a simple and smart test container framework for testing interactions with an Aptos node.
 
-## Install
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-aptos-testcontainer = { git = "https://github.com/sota-zk-labs/aptos-testcontainer.git" }
-```
 ## Usage
 Here’s how to use the `aptos-testcontainer` in your tests:
 
