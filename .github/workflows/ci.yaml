@@ -66,6 +66,7 @@ jobs:
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v4
         with:
+          target: 80
           threshold: 5
           token: ${{secrets.CODECOV_TOKEN}} # not required for public repos
           verbose: true
