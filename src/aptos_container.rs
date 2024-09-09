@@ -38,10 +38,10 @@ const MOVE_TOML: &[u8] = include_bytes!("../contract-samples/sample1/Move.toml")
 ///
 /// * `chain_id` - Chain ID for the network.
 ///
-/// * `deploy_contract` - Flag indicating whether to deploy contracts to the Aptos node.
-///     Optional list of account addresses to override default accounts.
+/// * `deploy_contract` - If set to `true`, contracts will be deployed upon initialization.
 ///
-/// * `override_accounts` - If set to `true`, contracts will be deployed upon initialization.
+/// * `override_accounts` - Flag indicating whether to deploy contracts to the Aptos node.
+///     Optional list of account addresses to override default accounts.
 ///
 /// * `container` - The Docker container instance running the Aptos node or shell.
 ///
@@ -168,8 +168,23 @@ impl AptosContainer {
     pub fn get_chain_id(&self) -> u8 {
         self.chain_id
     }
-    /// Get `accounts` from `override_accounts` in `AptosContainer` if override_accounts
-    /// is `Some`. If `None` call to `lazy_init_accounts` to init and return `accounts`.
+
+    /// Retrieves the list of accounts, either from an overridden source or from an initialized state.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Vec<String>>` - A vector containing the accounts as `String` if successful.
+    ///
+    /// # Example
+    /// ```rust
+    /// use aptos_testcontainer::aptos_container::AptosContainer;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let aptos_container = AptosContainer::init().await.unwrap();
+    ///     let accounts = aptos_container.get_initiated_accounts().await.unwrap();
+    /// }
+    /// ```
     pub async fn get_initiated_accounts(&self) -> Result<Vec<String>> {
         match &self.override_accounts {
             Some(accounts) => Ok(accounts.clone()),
@@ -220,7 +235,8 @@ impl AptosContainer {
     /// async fn main() {
     ///     let aptos_container = AptosContainer::init().await.unwrap();
     ///     let command = "bin/sh -c mkdir my_file".to_string();
-    ///     let (_, stderr) = aptos_container.run_command(&command).await.unwrap();
+    ///     let (stdout, stderr) = aptos_container.run_command(&command).await.unwrap();
+    ///     println!("stdout: {:?}", stdout);
     ///     println!("stderr: {:?}", stderr)
     /// }
     /// ```
@@ -297,18 +313,7 @@ impl AptosContainer {
     /// Lazily initializes the accounts if it has been initialized yet.
     /// This ensures that accounts are set up either from an external source or
     /// from environment variables only once, and avoids redundant initialization.
-    ///
-    /// # Example
-    /// ```rust
-    /// use aptos_testcontainer::aptos_container::AptosContainer;
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let aptos_containe = AptosContainer::init().await.unwrap();
-    ///     let accounts = aptos_containe.lazy_init_accounts().await.unwrap();
-    /// }
-    /// ```
-    pub async fn lazy_init_accounts(&self) -> Result<()> {
+    async fn lazy_init_accounts(&self) -> Result<()> {
         // If override accounts are provided, skip initialization and return early.
         if self.override_accounts.is_some() {
             return Ok(());
@@ -357,8 +362,7 @@ impl AptosContainer {
         Ok(())
     }
 
-    /// Copies contract files from a local directory into the container's filesystem. The files
-    /// are base64-encoded and transferred in chunks to avoid issues with large files.
+    /// Copies contract files from a local directory into the container's filesystem.
     ///
     /// # Arguments
     ///
@@ -489,7 +493,7 @@ impl AptosContainer {
     /// Executes a script located within the specified directory.
     ///
     /// # Parameters
-    /// - `local_dir`: The directory path containing the scripts to be executed.
+    /// - `local_dir`: The directory path containing contract code.
     /// - `private_key`: The private key of the account that will sign and execute the scripts.
     /// - `named_addresses`: A mapping of named addresses used for the script compilation.
     /// - `script_paths`: A vector of sub-directory paths within the `local_dir` where the scripts are located.
@@ -507,12 +511,14 @@ impl AptosContainer {
     ///     let module_account_private_key = accounts.first().unwrap();
     ///     let module_account_address = get_account_address(module_account_private_key);
     ///
+    ///     let local_dir = "./contract-samples/sample2";
+    ///
     ///     let mut named_addresses = HashMap::new();
     ///     named_addresses.insert("verifier_addr".to_string(), module_account_address.clone());
     ///     named_addresses.insert("lib_addr".to_string(), module_account_address);
     ///     aptos_container
     ///         .run_script(
-    ///         "./contract-samples/sample2",
+    ///         local_dir,
     ///         module_account_private_key,
     ///         &named_addresses,
     ///         &vec!["verifier"],
@@ -649,7 +655,7 @@ impl AptosContainer {
 
         let contract_path_str = contract_path.to_str().unwrap();
 
-        // Override `Move.toml` if no sub-packages are provided.-
+        // Override `Move.toml` if no sub-packages are provided.
         if sub_packages.is_none() {
             // Override Move.toml
             let dest_path = contract_path.join("Move.toml");
