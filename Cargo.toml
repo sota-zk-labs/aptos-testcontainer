@@ -4,7 +4,7 @@ edition = "2021"
 license = "MIT"
 name = "aptos-testcontainer"
 repository = "https://github.com/sota-zk-labs/aptos-testcontainer.git"
-version = "0.0.1"
+version = "0.0.5"
 
 [dependencies]
 anyhow = { version = "1.0.71" }
