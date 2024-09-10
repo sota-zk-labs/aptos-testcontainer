@@ -1,5 +1,6 @@
 # Aptos Test Container
 
+[![crate](https://img.shields.io/crates/v/aptos-testcontainer.svg)](https://crates.io/crates/aptos-testcontainer)
 [![License](https://img.shields.io/github/license/sota-zk-labs/aptos-testcontainer)](./LICENSE)
 [![Continuous Integration](https://github.com/sota-zk-labs/aptos-testcontainer/actions/workflows/ci.yaml/badge.svg)](https://github.com/sota-zk-labs/aptos-testcontainer/actions/workflows/ci.yaml/badge.svg)
 [![codecov](https://codecov.io/github/sota-zk-labs/aptos-testcontainer/branch/master/graph/badge.svg?token=CKEWC8QC0E)](https://codecov.io/github/sota-zk-labs/aptos-testcontainer)
