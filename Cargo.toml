@@ -16,7 +16,7 @@ log = "0.4.22"
 rand = "0.8.5"
 regex = "1.10.6"
 serde = { version = "1.0" }
-testcontainers = { version = "0.22.0" }
+testcontainers = { version = "0.23.1" }
 thiserror = { version = "1.0.63" }
 tiny-keccak = { version = "2.0.2", features = ["sha3"] }
 tokio = { version = "1.40.0", features = ["rt", "rt-multi-thread", "macros"] }
