@@ -7,7 +7,7 @@ repository = "https://github.com/sota-zk-labs/aptos-testcontainer.git"
 version = "0.1.2"
 
 [dependencies]
-anyhow = { version = "1.0.87" }
+anyhow = { version = "1.0.91" }
 base64 = "0.22.1"
 config = { version = "0.14.0" }
 ed25519-dalek = { version = "2.1.1" }
